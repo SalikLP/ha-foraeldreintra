@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 
 def _html_to_text(html_fragment: str) -> str:
@@ -356,6 +356,115 @@ def _parse_homework_notes(html_text: str) -> list[dict[str, Any]]:
             )
 
     return result
+
+
+_MD_BLOCK_TAGS = frozenset({
+    "p", "div", "li", "ul", "ol", "tr", "table", "tbody", "thead",
+    "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "section",
+})
+_MD_BOLD_TAGS = frozenset({"strong", "b"})
+_MD_SKIP_TAGS = frozenset({"script", "style"})
+
+
+def _md_wrap_bold(inner: str) -> str:
+    """Sætter ** ** om hver linje i `inner`; omkringliggende mellemrum holdes udenfor."""
+    inner = inner.replace("**", "")
+    out: list[str] = []
+    for segment in inner.split("\n"):
+        core = segment.strip()
+        if not core:
+            out.append(segment)
+            continue
+        lead = segment[: len(segment) - len(segment.lstrip())]
+        trail = segment[len(segment.rstrip()):]
+        out.append(f"{lead}**{core}**{trail}")
+    return "\n".join(out)
+
+
+def _md_render(node: Any, links: list[dict[str, Any]]) -> str:
+    """Renderer én HTML-node rekursivt som let Markdown; links samles i `links`."""
+    name = getattr(node, "name", None)
+    if name is None:
+        if isinstance(node, Comment):
+            return ""
+        return re.sub(r"[ \t\r\n\f]+", " ", str(node)).replace("\xa0", " ")
+
+    if name in _MD_SKIP_TAGS:
+        return ""
+    if name == "br":
+        return "\n"
+
+    inner = "".join(_md_render(child, links) for child in node.children)
+
+    if name == "a":
+        tekst = _clean_text(inner.replace("**", "")) or "link"
+        links.append({"tekst": tekst, "url": node.get("href")})
+        return inner
+    if name in _MD_BOLD_TAGS:
+        return _md_wrap_bold(inner)
+    if name in ("td", "th"):
+        return f"{inner} "
+    if name in _MD_BLOCK_TAGS:
+        return f"\n{inner}\n"
+    return inner
+
+
+def _html_to_markdown(content: Any) -> tuple[str, list[dict[str, Any]]]:
+    """Renderer lærerens HTML-blok som let Markdown (fed + linjeskift) og samler dens links."""
+    links: list[dict[str, Any]] = []
+    rendered = "".join(_md_render(child, links) for child in content.children)
+    lines = [re.sub(r" {2,}", " ", line).strip() for line in rendered.split("\n")]
+    return "\n".join(line for line in lines if line), links
+
+
+def _parse_homework_days(html_text: str) -> list[dict[str, Any]]:
+    """Én post pr. dato-boks i Lektiebogen: {dato (ISO), raw_text (Markdown), links}, stigende efter dato.
+
+    I modsætning til `_parse_homework_notes` beholdes noten hel (ingen opdeling i fag).
+    """
+    soup = BeautifulSoup(html_text or "", "html.parser")
+    days: list[dict[str, Any]] = []
+
+    for li in soup.select("ul.sk-list > li"):
+        dato_tag = li.select_one("div.sk-white-box > b")
+        content_div = li.select_one("div.sk-user-input")
+        if not dato_tag or not content_div:
+            continue
+
+        dato = _dk_date_to_iso(dato_tag.get_text(strip=True).replace(":", "").strip())
+        raw_text, links = _html_to_markdown(content_div)
+        if not dato or (not raw_text and not links):
+            continue
+
+        days.append({"dato": dato, "raw_text": raw_text, "links": links})
+
+    days.sort(key=lambda d: d["dato"])
+    return days
+
+
+def _merge_homework_days(
+    current: list[dict[str, Any]],
+    next_month: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Fletter Lektiebogens nuværende periode med NextMonth-visningen, stigende efter dato.
+
+    Findes en dato i NextMonth, bruges NextMonths poster (så ændret tekst vinder); øvrige
+    datoer beholder den nuværende periodes poster. Dubletter (samme dato + raw_text) optræder én gang.
+    Ikke-ISO dato-værdier behandles som enhver anden nøgle, da `_parse_homework_days` beholder dem.
+    """
+    next_month_dates = {d["dato"] for d in next_month}
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for day in [d for d in current if d["dato"] not in next_month_dates] + list(next_month):
+        key = (day["dato"], day["raw_text"])
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(day)
+
+    merged.sort(key=lambda d: d["dato"])
+    return merged
 
 
 def _dk_date_to_iso(date_str: str | None) -> str | None:

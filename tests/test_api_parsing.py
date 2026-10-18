@@ -9,9 +9,12 @@ from custom_components.foraeldreintra.api_parser import (
     _extract_diary_id,
     _extract_latest_weekplan_from_list,
     _html_to_text,
+    _merge_homework_days,
+    _parse_homework_days,
     _parse_homework_notes,
     _parse_weekplan_page,
 )
+from tests.helpers import notes_page
 
 
 class TestDkDateToIso:
@@ -387,3 +390,120 @@ class TestParseWeekplanPage:
         )
         assert result["title"] == "Uge 23"
         assert result["items"] == []
+
+
+class TestParseHomeworkDays:
+    def test_plain_subject_lines_stay_in_raw_text(self):
+        html_text = notes_page((
+            "Mandag, 19. okt. 2026",
+            "<p>DANSK: Læs side 10-12.</p><p>MATEMATIK: Opgave 3 og 4.</p>",
+        ))
+        days = _parse_homework_days(html_text)
+        assert days == [{
+            "dato": "2026-10-19",
+            "raw_text": "DANSK: Læs side 10-12.\nMATEMATIK: Opgave 3 og 4.",
+            "links": [],
+        }]
+
+    def test_inline_bold_becomes_markdown(self):
+        html_text = notes_page((
+            "Mandag, 19. okt. 2026",
+            "<p><strong>Dansk: </strong>Læs <b>kapitel 2</b> til i morgen.</p>",
+        ))
+        days = _parse_homework_days(html_text)
+        assert days[0]["raw_text"] == "**Dansk:** Læs **kapitel 2** til i morgen."
+
+    def test_bold_spanning_a_line_break_is_closed_per_line(self):
+        html_text = notes_page((
+            "Mandag, 19. okt. 2026",
+            "<p><strong>Engelsk<br>Glosetest</strong></p>",
+        ))
+        assert _parse_homework_days(html_text)[0]["raw_text"] == "**Engelsk**\n**Glosetest**"
+
+    def test_paragraphs_and_br_become_line_breaks(self):
+        html_text = notes_page((
+            "Mandag, 19. okt. 2026",
+            """<p>Dansk:</p>
+               <p>Læs side 10.<br>Skriv
+                  resumé.</p>
+               <p>&nbsp;</p>
+               <div>Engelsk: Glosetest</div>""",
+        ))
+        days = _parse_homework_days(html_text)
+        assert days[0]["raw_text"] == "Dansk:\nLæs side 10.\nSkriv resumé.\nEngelsk: Glosetest"
+
+    def test_links_extracted_and_rendered_as_text(self):
+        html_text = notes_page((
+            "Mandag, 19. okt. 2026",
+            '<p>Se <a href="https://example.com/opgave">opgaven her</a> og '
+            '<a href="/files/ark.pdf"></a></p>',
+        ))
+        day = _parse_homework_days(html_text)[0]
+        assert day["raw_text"] == "Se opgaven her og"
+        assert day["links"] == [
+            {"tekst": "opgaven her", "url": "https://example.com/opgave"},
+            {"tekst": "link", "url": "/files/ark.pdf"},
+        ]
+
+    def test_other_markup_stripped(self):
+        html_text = notes_page((
+            "Mandag, 19. okt. 2026",
+            '<p><span style="color:red"><em>Husk</em> idrætstøj</span></p>'
+            "<table><tr><td>Fysik</td><td>Forsøg</td></tr></table>",
+        ))
+        assert _parse_homework_days(html_text)[0]["raw_text"] == "Husk idrætstøj\nFysik Forsøg"
+
+    def test_output_is_ascending_by_date(self):
+        html_text = notes_page(
+            ("Onsdag, 21. okt. 2026", "<p>C</p>"),
+            ("Mandag, 19. okt. 2026", "<p>A</p>"),
+            ("Tirsdag, 20. okt. 2026", "<p>B</p>"),
+        )
+        days = _parse_homework_days(html_text)
+        assert [d["dato"] for d in days] == ["2026-10-19", "2026-10-20", "2026-10-21"]
+        assert [d["raw_text"] for d in days] == ["A", "B", "C"]
+
+    def test_empty_boxes_and_incomplete_items_skipped(self):
+        html_text = notes_page(("Mandag, 19. okt. 2026", "<p>&nbsp;</p>")) + (
+            '<ul class="sk-list"><li><div class="sk-user-input">x</div></li></ul>'
+        )
+        assert _parse_homework_days(html_text) == []
+        assert _parse_homework_days("") == []
+
+
+def _day(dato: str, raw_text: str) -> dict:
+    return {"dato": dato, "raw_text": raw_text, "links": []}
+
+
+class TestMergeHomeworkDays:
+    def test_overlapping_day_appears_once(self):
+        current = [_day("2026-10-19", "Læs side 10."), _day("2026-10-20", "Glosetest")]
+        next_month = [_day("2026-10-20", "Glosetest"), _day("2026-10-26", "Husk idrætstøj")]
+        merged = _merge_homework_days(current, next_month)
+        assert merged == [
+            _day("2026-10-19", "Læs side 10."),
+            _day("2026-10-20", "Glosetest"),
+            _day("2026-10-26", "Husk idrætstøj"),
+        ]
+
+    def test_conflicting_dato_next_month_wins(self):
+        current = [_day("2026-10-20", "Glosetest i engelsk")]
+        next_month = [_day("2026-10-20", "Glosetest flyttet til fredag")]
+        assert _merge_homework_days(current, next_month) == [
+            _day("2026-10-20", "Glosetest flyttet til fredag"),
+        ]
+
+    def test_output_is_ascending(self):
+        current = [_day("2026-10-21", "C"), _day("2026-10-19", "A")]
+        next_month = [_day("2026-11-02", "E"), _day("2026-10-20", "B"), _day("2026-10-27", "D")]
+        merged = _merge_homework_days(current, next_month)
+        assert [d["raw_text"] for d in merged] == ["A", "B", "C", "D", "E"]
+
+    def test_empty_next_month_keeps_current(self):
+        current = [_day("2026-10-19", "A"), _day("2026-10-20", "B")]
+        assert _merge_homework_days(current, []) == current
+        assert _merge_homework_days([], []) == []
+
+    def test_same_dato_twice_in_one_view_kept_unless_identical(self):
+        current = [_day("2026-10-19", "A"), _day("2026-10-19", "B"), _day("2026-10-19", "A")]
+        assert [d["raw_text"] for d in _merge_homework_days(current, [])] == ["A", "B"]
