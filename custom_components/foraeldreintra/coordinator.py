@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import ForaldreIntraClient, ForaldreIntraAuthError, ForaldreIntraError
+from .api import ForaldreIntraClient, ForaldreIntraAuthError, ForaldreIntraError, HomeworkResult
 from .const import (
     CONF_PASSWORD,
     CONF_SCHOOL_URL,
@@ -50,9 +50,15 @@ class ForaldreIntraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data = await self._fetch_children_homework_and_weekplans_with_retry()
 
             if self._is_valid_result(data):
-                # Kun et vellykket login+parse flytter last_success; fallback-stierne
+                # Kun et fuldt vellykket login+parse flytter last_success; fallback-stierne
                 # nedenfor returnerer _last_good_data med det gamle tidsstempel.
-                data["last_success"] = datetime.now(timezone.utc).isoformat()
+                if data.pop("days_complete", True):
+                    data["last_success"] = datetime.now(timezone.utc).isoformat()
+                else:
+                    # NextMonth fejlede: behold nuværende periodes dage, men lad
+                    # last_success stå, så en vedvarende NextMonth-fejl viser sig som forældet.
+                    _LOGGER.warning("NextMonth kunne ikke hentes. last_success flyttes ikke.")
+                    data["last_success"] = (self._last_good_data or {}).get("last_success")
                 self._last_good_data = data
                 return data
 
@@ -110,13 +116,17 @@ class ForaldreIntraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.client.login()
             children = await self.client.get_children()
 
-        items, days = await self.client.get_homework_and_days_for_children(children) if children else ([], {})
+        homework = (
+            await self.client.get_homework_and_days_for_children(children)
+            if children else HomeworkResult(items=[], days={})
+        )
         weeklyplans = await self.client.get_weekplans_for_children(children) if children else {}
 
         return {
             "children": [{"id": c.id, "name": c.name} for c in children],
-            "items": items,
-            "days": days,
+            "items": homework.items,
+            "days": homework.days,
+            "days_complete": homework.complete,
             "weeklyplans": weeklyplans,
         }
 

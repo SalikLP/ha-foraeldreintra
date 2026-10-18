@@ -14,6 +14,7 @@ from custom_components.foraeldreintra.api_parser import (
     _parse_homework_notes,
     _parse_weekplan_page,
 )
+from tests.helpers import notes_page
 
 
 class TestDkDateToIso:
@@ -391,21 +392,9 @@ class TestParseWeekplanPage:
         assert result["items"] == []
 
 
-def _notes_page(*days: tuple[str, str]) -> str:
-    lis = "".join(
-        f"""
-        <li>
-          <div class="sk-white-box"><b>{dato}:</b></div>
-          <div class="sk-user-input">{content}</div>
-        </li>"""
-        for dato, content in days
-    )
-    return f'<html><body><ul class="sk-list">{lis}</ul></body></html>'
-
-
 class TestParseHomeworkDays:
     def test_plain_subject_lines_stay_in_raw_text(self):
-        html_text = _notes_page((
+        html_text = notes_page((
             "Mandag, 19. okt. 2026",
             "<p>DANSK: Læs side 10-12.</p><p>MATEMATIK: Opgave 3 og 4.</p>",
         ))
@@ -417,7 +406,7 @@ class TestParseHomeworkDays:
         }]
 
     def test_inline_bold_becomes_markdown(self):
-        html_text = _notes_page((
+        html_text = notes_page((
             "Mandag, 19. okt. 2026",
             "<p><strong>Dansk: </strong>Læs <b>kapitel 2</b> til i morgen.</p>",
         ))
@@ -425,14 +414,14 @@ class TestParseHomeworkDays:
         assert days[0]["raw_text"] == "**Dansk:** Læs **kapitel 2** til i morgen."
 
     def test_bold_spanning_a_line_break_is_closed_per_line(self):
-        html_text = _notes_page((
+        html_text = notes_page((
             "Mandag, 19. okt. 2026",
             "<p><strong>Engelsk<br>Glosetest</strong></p>",
         ))
         assert _parse_homework_days(html_text)[0]["raw_text"] == "**Engelsk**\n**Glosetest**"
 
     def test_paragraphs_and_br_become_line_breaks(self):
-        html_text = _notes_page((
+        html_text = notes_page((
             "Mandag, 19. okt. 2026",
             """<p>Dansk:</p>
                <p>Læs side 10.<br>Skriv
@@ -444,7 +433,7 @@ class TestParseHomeworkDays:
         assert days[0]["raw_text"] == "Dansk:\nLæs side 10.\nSkriv resumé.\nEngelsk: Glosetest"
 
     def test_links_extracted_and_rendered_as_text(self):
-        html_text = _notes_page((
+        html_text = notes_page((
             "Mandag, 19. okt. 2026",
             '<p>Se <a href="https://example.com/opgave">opgaven her</a> og '
             '<a href="/files/ark.pdf"></a></p>',
@@ -457,7 +446,7 @@ class TestParseHomeworkDays:
         ]
 
     def test_other_markup_stripped(self):
-        html_text = _notes_page((
+        html_text = notes_page((
             "Mandag, 19. okt. 2026",
             '<p><span style="color:red"><em>Husk</em> idrætstøj</span></p>'
             "<table><tr><td>Fysik</td><td>Forsøg</td></tr></table>",
@@ -465,7 +454,7 @@ class TestParseHomeworkDays:
         assert _parse_homework_days(html_text)[0]["raw_text"] == "Husk idrætstøj\nFysik Forsøg"
 
     def test_output_is_ascending_by_date(self):
-        html_text = _notes_page(
+        html_text = notes_page(
             ("Onsdag, 21. okt. 2026", "<p>C</p>"),
             ("Mandag, 19. okt. 2026", "<p>A</p>"),
             ("Tirsdag, 20. okt. 2026", "<p>B</p>"),
@@ -475,7 +464,7 @@ class TestParseHomeworkDays:
         assert [d["raw_text"] for d in days] == ["A", "B", "C"]
 
     def test_empty_boxes_and_incomplete_items_skipped(self):
-        html_text = _notes_page(("Mandag, 19. okt. 2026", "<p>&nbsp;</p>")) + (
+        html_text = notes_page(("Mandag, 19. okt. 2026", "<p>&nbsp;</p>")) + (
             '<ul class="sk-list"><li><div class="sk-user-input">x</div></li></ul>'
         )
         assert _parse_homework_days(html_text) == []

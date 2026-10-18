@@ -367,7 +367,7 @@ _MD_SKIP_TAGS = frozenset({"script", "style"})
 
 
 def _md_wrap_bold(inner: str) -> str:
-    """Wrap each line of `inner` in ** **, keeping surrounding whitespace outside."""
+    """Sætter ** ** om hver linje i `inner`; omkringliggende mellemrum holdes udenfor."""
     inner = inner.replace("**", "")
     out: list[str] = []
     for segment in inner.split("\n"):
@@ -382,6 +382,7 @@ def _md_wrap_bold(inner: str) -> str:
 
 
 def _md_render(node: Any, links: list[dict[str, Any]]) -> str:
+    """Renderer én HTML-node rekursivt som let Markdown; links samles i `links`."""
     name = getattr(node, "name", None)
     if name is None:
         if isinstance(node, Comment):
@@ -409,7 +410,7 @@ def _md_render(node: Any, links: list[dict[str, Any]]) -> str:
 
 
 def _html_to_markdown(content: Any) -> tuple[str, list[dict[str, Any]]]:
-    """Render a teacher's HTML block as light Markdown (bold + line breaks) and collect its links."""
+    """Renderer lærerens HTML-blok som let Markdown (fed + linjeskift) og samler dens links."""
     links: list[dict[str, Any]] = []
     rendered = "".join(_md_render(child, links) for child in content.children)
     lines = [re.sub(r" {2,}", " ", line).strip() for line in rendered.split("\n")]
@@ -417,9 +418,9 @@ def _html_to_markdown(content: Any) -> tuple[str, list[dict[str, Any]]]:
 
 
 def _parse_homework_days(html_text: str) -> list[dict[str, Any]]:
-    """One entry per Lektiebog date box: {dato (ISO), raw_text (Markdown), links}, ascending by dato.
+    """Én post pr. dato-boks i Lektiebogen: {dato (ISO), raw_text (Markdown), links}, stigende efter dato.
 
-    Unlike `_parse_homework_notes` the note is kept whole (no subject splitting).
+    I modsætning til `_parse_homework_notes` beholdes noten hel (ingen opdeling i fag).
     """
     soup = BeautifulSoup(html_text or "", "html.parser")
     days: list[dict[str, Any]] = []
@@ -445,11 +446,11 @@ def _merge_homework_days(
     current: list[dict[str, Any]],
     next_month: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Merge the current Lektiebog period with the NextMonth view, ascending by dato.
+    """Fletter Lektiebogens nuværende periode med NextMonth-visningen, stigende efter dato.
 
-    A dato present in NextMonth takes NextMonth's entries (so changed text wins); other
-    dates keep the current period's entries. Duplicates (same dato + raw_text) appear once.
-    Non-ISO dato values are treated like any other key, as `_parse_homework_days` keeps them.
+    Findes en dato i NextMonth, bruges NextMonths poster (så ændret tekst vinder); øvrige
+    datoer beholder den nuværende periodes poster. Dubletter (samme dato + raw_text) optræder én gang.
+    Ikke-ISO dato-værdier behandles som enhver anden nøgle, da `_parse_homework_days` beholder dem.
     """
     next_month_dates = {d["dato"] for d in next_month}
     merged: list[dict[str, Any]] = []

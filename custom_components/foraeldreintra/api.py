@@ -18,6 +18,7 @@ from .api_parser import (
     _parse_homework_notes,
     _parse_weekplan_page,
 )
+from .decoding import _decode_display_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +35,17 @@ class ForaldreIntraError(Exception):
 class Child:
     id: str
     name: str
+
+
+@dataclass
+class HomeworkResult:
+    """Resultat af én lektiehentning for alle børn."""
+
+    items: list[dict[str, Any]]
+    # {dekodet barnenavn: [{dato, raw_text, links}, ...]} sorteret stigende
+    days: dict[str, list[dict[str, Any]]]
+    # False hvis NextMonth fejlede for mindst ét barn (days har så kun nuværende periode)
+    complete: bool = True
 
 
 class ForaldreIntraClient:
@@ -174,26 +186,19 @@ class ForaldreIntraClient:
     async def get_homework(self) -> list[dict[str, Any]]:
         """Henter lektier for alle børn."""
         children = await self.get_children()
-        return await self.get_homework_for_children(children)
-
-    async def get_homework_for_children(
-        self,
-        children: list[Child],
-    ) -> list[dict[str, Any]]:
-        """Henter lektier for en given liste af børn."""
-        items, _days = await self.get_homework_and_days_for_children(children)
-        return items
+        return (await self.get_homework_and_days_for_children(children)).items
 
     async def get_homework_and_days_for_children(
         self,
         children: list[Child],
-    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    ) -> HomeworkResult:
         """Henter lektier (items, flad liste) og lektiebog-dage pr. barn i ét gennemløb.
 
-        days: {child_name: [{dato, raw_text, links}, ...]} sorteret stigende.
+        days er nøglet på barnets dekodede navn (samme navn som sensorerne bruger).
         """
         all_items: list[dict[str, Any]] = []
         days_by_child: dict[str, list[dict[str, Any]]] = {}
+        complete = True
 
         for child in children:
             child_id = child.id
@@ -213,9 +218,12 @@ class ForaldreIntraClient:
                 f"item/weeklyplansandhomework/diary/notes/{diary_id}"
             )
             notes_text = await self._get_text(notes_url)
-            days_by_child[child_name] = _merge_homework_days(
+            next_month_days = await self._get_next_month_days(f"{notes_url}/NextMonth")
+            if next_month_days is None:
+                complete = False
+            days_by_child[_decode_display_value(child_name) or child_name] = _merge_homework_days(
                 _parse_homework_days(notes_text),
-                await self._get_next_month_days(f"{notes_url}/NextMonth"),
+                next_month_days or [],
             )
             parsed = _parse_homework_notes(notes_text)
 
@@ -231,15 +239,15 @@ class ForaldreIntraClient:
                 x.get("fag") or "",
             )
         )
-        return all_items, days_by_child
+        return HomeworkResult(items=all_items, days=days_by_child, complete=complete)
 
-    async def _get_next_month_days(self, url: str) -> list[dict[str, Any]]:
-        """Lektiebog-dage fra NextMonth-visningen; fejl giver [] (så nuværende periode stadig bruges)."""
+    async def _get_next_month_days(self, url: str) -> list[dict[str, Any]] | None:
+        """Lektiebog-dage fra NextMonth-visningen; None ved fejl (nuværende periode bruges stadig)."""
         try:
             return _parse_homework_days(await self._get_text(url))
         except (ForaldreIntraError, ForaldreIntraAuthError, ClientError, asyncio.TimeoutError) as err:
             _LOGGER.warning("Kunne ikke hente NextMonth (%s): %s", url, err)
-            return []
+            return None
 
     async def get_weekplans_for_children(
         self,

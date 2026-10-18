@@ -349,7 +349,7 @@ class ForaeldreIntraAllHomeworkSensor(ForaeldreIntraBaseSensor):
 
 class ForaeldreIntraChildHomeworkSensor(ForaeldreIntraBaseSensor):
     _attr_icon = "mdi:book-account"
-    # `days` holds whole notes; keep it out of the recorder (16 KB attribute limit).
+    # `days` rummer hele noter; holdes ude af recorderen (grænse på 16 KB for attributter).
     _unrecorded_attributes = frozenset({"days"})
 
     def __init__(self, hass: HomeAssistant, coordinator: ForaldreIntraCoordinator, entry: ConfigEntry, child_name: str) -> None:
@@ -380,20 +380,14 @@ class ForaeldreIntraChildHomeworkSensor(ForaeldreIntraBaseSensor):
                 )
             ),
             "weekplan_derived_homework_keywords": _weekplan_keywords(self._entry),
-            "days": self._get_days(),
+            # days er nøglet på dekodet barnenavn (se api.get_homework_and_days_for_children)
+            "days": ((self.coordinator.data or {}).get("days") or {}).get(self._child) or [],
         }
         if bool(self._entry.options.get(OPT_ADD_HOMEWORK_MARKDOWN, DEFAULT_ADD_HOMEWORK_MARKDOWN)):
             attrs["markdown"] = _build_homework_markdown(filtered)
 
         attrs["last_success"] = (self.coordinator.data or {}).get("last_success")
         return attrs
-
-    def _get_days(self) -> list[dict[str, Any]]:
-        days_by_child = (self.coordinator.data or {}).get("days") or {}
-        for name, days in days_by_child.items():
-            if (_decode_display_value(name) or "") == self._child:
-                return days or []
-        return []
 
 
 class ForaeldreIntraChildWeekplanSensor(ForaeldreIntraBaseSensor):
