@@ -22,8 +22,9 @@ class _FakeClient:
             return []
         return [SimpleNamespace(id="1", name="Barn")]
 
-    async def get_homework_for_children(self, children):
-        return [{"barn": "Barn", "dato": "2026-10-19", "fag": "Dansk", "tekst": "Læs"}]
+    async def get_homework_and_days_for_children(self, children):
+        items = [{"barn": "Barn", "dato": "2026-10-19", "fag": "Dansk", "tekst": "Læs"}]
+        return items, {"Barn": [{"dato": "2026-10-19", "raw_text": "Læs", "links": []}]}
 
     async def get_weekplans_for_children(self, children):
         return {}
