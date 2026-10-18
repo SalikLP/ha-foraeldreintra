@@ -5,7 +5,7 @@ import json
 import re
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 
 def _html_to_text(html_fragment: str) -> str:
@@ -356,6 +356,89 @@ def _parse_homework_notes(html_text: str) -> list[dict[str, Any]]:
             )
 
     return result
+
+
+_MD_BLOCK_TAGS = frozenset({
+    "p", "div", "li", "ul", "ol", "tr", "table", "tbody", "thead",
+    "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "section",
+})
+_MD_BOLD_TAGS = frozenset({"strong", "b"})
+_MD_SKIP_TAGS = frozenset({"script", "style"})
+
+
+def _md_wrap_bold(inner: str) -> str:
+    """Wrap each line of `inner` in ** **, keeping surrounding whitespace outside."""
+    inner = inner.replace("**", "")
+    out: list[str] = []
+    for segment in inner.split("\n"):
+        core = segment.strip()
+        if not core:
+            out.append(segment)
+            continue
+        lead = segment[: len(segment) - len(segment.lstrip())]
+        trail = segment[len(segment.rstrip()):]
+        out.append(f"{lead}**{core}**{trail}")
+    return "\n".join(out)
+
+
+def _md_render(node: Any, links: list[dict[str, Any]]) -> str:
+    name = getattr(node, "name", None)
+    if name is None:
+        if isinstance(node, Comment):
+            return ""
+        return re.sub(r"[ \t\r\n\f]+", " ", str(node)).replace("\xa0", " ")
+
+    if name in _MD_SKIP_TAGS:
+        return ""
+    if name == "br":
+        return "\n"
+
+    inner = "".join(_md_render(child, links) for child in node.children)
+
+    if name == "a":
+        tekst = _clean_text(inner.replace("**", "")) or "link"
+        links.append({"tekst": tekst, "url": node.get("href")})
+        return inner
+    if name in _MD_BOLD_TAGS:
+        return _md_wrap_bold(inner)
+    if name in ("td", "th"):
+        return f"{inner} "
+    if name in _MD_BLOCK_TAGS:
+        return f"\n{inner}\n"
+    return inner
+
+
+def _html_to_markdown(content: Any) -> tuple[str, list[dict[str, Any]]]:
+    """Render a teacher's HTML block as light Markdown (bold + line breaks) and collect its links."""
+    links: list[dict[str, Any]] = []
+    rendered = "".join(_md_render(child, links) for child in content.children)
+    lines = [re.sub(r" {2,}", " ", line).strip() for line in rendered.split("\n")]
+    return "\n".join(line for line in lines if line), links
+
+
+def _parse_homework_days(html_text: str) -> list[dict[str, Any]]:
+    """One entry per Lektiebog date box: {dato (ISO), raw_text (Markdown), links}, ascending by dato.
+
+    Unlike `_parse_homework_notes` the note is kept whole (no subject splitting).
+    """
+    soup = BeautifulSoup(html_text or "", "html.parser")
+    days: list[dict[str, Any]] = []
+
+    for li in soup.select("ul.sk-list > li"):
+        dato_tag = li.select_one("div.sk-white-box > b")
+        content_div = li.select_one("div.sk-user-input")
+        if not dato_tag or not content_div:
+            continue
+
+        dato = _dk_date_to_iso(dato_tag.get_text(strip=True).replace(":", "").strip())
+        raw_text, links = _html_to_markdown(content_div)
+        if not dato or (not raw_text and not links):
+            continue
+
+        days.append({"dato": dato, "raw_text": raw_text, "links": links})
+
+    days.sort(key=lambda d: d["dato"])
+    return days
 
 
 def _dk_date_to_iso(date_str: str | None) -> str | None:

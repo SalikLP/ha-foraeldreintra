@@ -110,12 +110,13 @@ class ForaldreIntraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.client.login()
             children = await self.client.get_children()
 
-        items = await self.client.get_homework_for_children(children) if children else []
+        items, days = await self.client.get_homework_and_days_for_children(children) if children else ([], {})
         weeklyplans = await self.client.get_weekplans_for_children(children) if children else {}
 
         return {
             "children": [{"id": c.id, "name": c.name} for c in children],
             "items": items,
+            "days": days,
             "weeklyplans": weeklyplans,
         }
 

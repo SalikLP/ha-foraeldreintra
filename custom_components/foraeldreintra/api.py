@@ -11,6 +11,7 @@ from .api_parser import (
     _dk_date_to_iso,
     _extract_diary_id,
     _extract_latest_weekplan_from_list,
+    _parse_homework_days,
     _parse_homework_notes,
     _parse_weekplan_page,
 )
@@ -175,7 +176,19 @@ class ForaldreIntraClient:
         children: list[Child],
     ) -> list[dict[str, Any]]:
         """Henter lektier for en given liste af børn."""
+        items, _days = await self.get_homework_and_days_for_children(children)
+        return items
+
+    async def get_homework_and_days_for_children(
+        self,
+        children: list[Child],
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        """Henter lektier (items, flad liste) og lektiebog-dage pr. barn i ét gennemløb.
+
+        days: {child_name: [{dato, raw_text, links}, ...]} sorteret stigende.
+        """
         all_items: list[dict[str, Any]] = []
+        days_by_child: dict[str, list[dict[str, Any]]] = {}
 
         for child in children:
             child_id = child.id
@@ -195,6 +208,7 @@ class ForaldreIntraClient:
                 f"item/weeklyplansandhomework/diary/notes/{diary_id}"
             )
             notes_text = await self._get_text(notes_url)
+            days_by_child[child_name] = _parse_homework_days(notes_text)
             parsed = _parse_homework_notes(notes_text)
 
             for item in parsed:
@@ -209,7 +223,7 @@ class ForaldreIntraClient:
                 x.get("fag") or "",
             )
         )
-        return all_items
+        return all_items, days_by_child
 
     async def get_weekplans_for_children(
         self,
