@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
-from aiohttp import ClientSession
+from aiohttp import ClientError, ClientSession
 from bs4 import BeautifulSoup
 
 from .api_parser import (
@@ -11,10 +13,13 @@ from .api_parser import (
     _dk_date_to_iso,
     _extract_diary_id,
     _extract_latest_weekplan_from_list,
+    _merge_homework_days,
     _parse_homework_days,
     _parse_homework_notes,
     _parse_weekplan_page,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class ForaldreIntraAuthError(Exception):
@@ -208,7 +213,10 @@ class ForaldreIntraClient:
                 f"item/weeklyplansandhomework/diary/notes/{diary_id}"
             )
             notes_text = await self._get_text(notes_url)
-            days_by_child[child_name] = _parse_homework_days(notes_text)
+            days_by_child[child_name] = _merge_homework_days(
+                _parse_homework_days(notes_text),
+                await self._get_next_month_days(f"{notes_url}/NextMonth"),
+            )
             parsed = _parse_homework_notes(notes_text)
 
             for item in parsed:
@@ -224,6 +232,14 @@ class ForaldreIntraClient:
             )
         )
         return all_items, days_by_child
+
+    async def _get_next_month_days(self, url: str) -> list[dict[str, Any]]:
+        """Lektiebog-dage fra NextMonth-visningen; fejl giver [] (så nuværende periode stadig bruges)."""
+        try:
+            return _parse_homework_days(await self._get_text(url))
+        except (ForaldreIntraError, ForaldreIntraAuthError, ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.warning("Kunne ikke hente NextMonth (%s): %s", url, err)
+            return []
 
     async def get_weekplans_for_children(
         self,

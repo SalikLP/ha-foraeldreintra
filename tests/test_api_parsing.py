@@ -9,6 +9,7 @@ from custom_components.foraeldreintra.api_parser import (
     _extract_diary_id,
     _extract_latest_weekplan_from_list,
     _html_to_text,
+    _merge_homework_days,
     _parse_homework_days,
     _parse_homework_notes,
     _parse_weekplan_page,
@@ -479,3 +480,41 @@ class TestParseHomeworkDays:
         )
         assert _parse_homework_days(html_text) == []
         assert _parse_homework_days("") == []
+
+
+def _day(dato: str, raw_text: str) -> dict:
+    return {"dato": dato, "raw_text": raw_text, "links": []}
+
+
+class TestMergeHomeworkDays:
+    def test_overlapping_day_appears_once(self):
+        current = [_day("2026-10-19", "Læs side 10."), _day("2026-10-20", "Glosetest")]
+        next_month = [_day("2026-10-20", "Glosetest"), _day("2026-10-26", "Husk idrætstøj")]
+        merged = _merge_homework_days(current, next_month)
+        assert merged == [
+            _day("2026-10-19", "Læs side 10."),
+            _day("2026-10-20", "Glosetest"),
+            _day("2026-10-26", "Husk idrætstøj"),
+        ]
+
+    def test_conflicting_dato_next_month_wins(self):
+        current = [_day("2026-10-20", "Glosetest i engelsk")]
+        next_month = [_day("2026-10-20", "Glosetest flyttet til fredag")]
+        assert _merge_homework_days(current, next_month) == [
+            _day("2026-10-20", "Glosetest flyttet til fredag"),
+        ]
+
+    def test_output_is_ascending(self):
+        current = [_day("2026-10-21", "C"), _day("2026-10-19", "A")]
+        next_month = [_day("2026-11-02", "E"), _day("2026-10-20", "B"), _day("2026-10-27", "D")]
+        merged = _merge_homework_days(current, next_month)
+        assert [d["raw_text"] for d in merged] == ["A", "B", "C", "D", "E"]
+
+    def test_empty_next_month_keeps_current(self):
+        current = [_day("2026-10-19", "A"), _day("2026-10-20", "B")]
+        assert _merge_homework_days(current, []) == current
+        assert _merge_homework_days([], []) == []
+
+    def test_same_dato_twice_in_one_view_kept_unless_identical(self):
+        current = [_day("2026-10-19", "A"), _day("2026-10-19", "B"), _day("2026-10-19", "A")]
+        assert [d["raw_text"] for d in _merge_homework_days(current, [])] == ["A", "B"]

@@ -441,6 +441,31 @@ def _parse_homework_days(html_text: str) -> list[dict[str, Any]]:
     return days
 
 
+def _merge_homework_days(
+    current: list[dict[str, Any]],
+    next_month: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge the current Lektiebog period with the NextMonth view, ascending by dato.
+
+    A dato present in NextMonth takes NextMonth's entries (so changed text wins); other
+    dates keep the current period's entries. Duplicates (same dato + raw_text) appear once.
+    Non-ISO dato values are treated like any other key, as `_parse_homework_days` keeps them.
+    """
+    next_month_dates = {d["dato"] for d in next_month}
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for day in [d for d in current if d["dato"] not in next_month_dates] + list(next_month):
+        key = (day["dato"], day["raw_text"])
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(day)
+
+    merged.sort(key=lambda d: d["dato"])
+    return merged
+
+
 def _dk_date_to_iso(date_str: str | None) -> str | None:
     if not date_str:
         return None
