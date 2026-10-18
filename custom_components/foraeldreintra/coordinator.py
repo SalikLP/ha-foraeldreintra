@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
@@ -50,6 +50,9 @@ class ForaldreIntraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data = await self._fetch_children_homework_and_weekplans_with_retry()
 
             if self._is_valid_result(data):
+                # Kun et vellykket login+parse flytter last_success; fallback-stierne
+                # nedenfor returnerer _last_good_data med det gamle tidsstempel.
+                data["last_success"] = datetime.now(timezone.utc).isoformat()
                 self._last_good_data = data
                 return data
 

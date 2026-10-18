@@ -381,6 +381,8 @@ class ForaeldreIntraChildHomeworkSensor(ForaeldreIntraBaseSensor):
         }
         if bool(self._entry.options.get(OPT_ADD_HOMEWORK_MARKDOWN, DEFAULT_ADD_HOMEWORK_MARKDOWN)):
             attrs["markdown"] = _build_homework_markdown(filtered)
+
+        attrs["last_success"] = (self.coordinator.data or {}).get("last_success")
         return attrs
 
 
